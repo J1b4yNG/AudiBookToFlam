@@ -7,3 +7,4 @@ _test_*/
 _test_*.zip
 out/
 *.zip
+.claude/
