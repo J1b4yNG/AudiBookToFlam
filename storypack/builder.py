@@ -15,6 +15,58 @@ from .chapter_images import generate_chapter_images
 AUDIO_EXTS = {".mp3", ".mka", ".m4a", ".ogg", ".oga", ".wav", ".flac", ".aac"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
+# Noms d'entrées que build_pack() est seul à créer dans output_dir : c'est tout ce qu'il est
+# autorisé à effacer avant de régénérer un pack, jamais le reste du contenu du dossier.
+_PACK_OWNED_ENTRIES = {"assets", "story.json", "thumbnail.png", "_tmp"}
+
+
+def _is_within_or_equal(path: Path, other: Path) -> bool:
+    return path == other or other in path.parents
+
+
+def _prepare_output_dir(output_dir: Path, input_dir: Path) -> None:
+    """Prépare `output_dir` en n'effaçant que ce que cet outil a lui-même généré lors d'un
+    précédent passage, jamais un dossier existant arbitraire (cf. les dangers de shutil.rmtree
+    sur un chemin fourni par l'utilisateur)."""
+    output_resolved = output_dir.resolve()
+    input_resolved = input_dir.resolve()
+
+    if _is_within_or_equal(output_resolved, input_resolved) or _is_within_or_equal(input_resolved, output_resolved):
+        raise RuntimeError(
+            "Le dossier de sortie ne peut pas être le dossier d'entrée, ni un dossier "
+            "parent/enfant de celui-ci (cela risquerait d'effacer tes fichiers sources)."
+        )
+
+    home = Path.home().resolve()
+    if output_resolved == home or output_resolved.parent == output_resolved:
+        raise RuntimeError(
+            f"{output_resolved} ressemble à ton dossier utilisateur ou à une racine de disque : "
+            "choisis un sous-dossier dédié pour éviter d'effacer des données par erreur."
+        )
+
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
+        return
+
+    if not output_dir.is_dir():
+        raise RuntimeError(f"{output_dir} existe déjà et n'est pas un dossier.")
+
+    existing_entries = {p.name for p in output_dir.iterdir()}
+    unexpected = existing_entries - _PACK_OWNED_ENTRIES
+    if unexpected:
+        raise RuntimeError(
+            f"{output_dir} existe déjà et contient des fichiers qui ne semblent pas provenir "
+            f"d'un pack généré par cet outil ({', '.join(sorted(unexpected))}). "
+            "Choisis un dossier vide ou inexistant pour éviter d'écraser des données par erreur."
+        )
+
+    for name in _PACK_OWNED_ENTRIES:
+        target = output_dir / name
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+
 
 @dataclass
 class Chapter:
@@ -96,8 +148,7 @@ def build_pack(
     n = len(chapters)
     report(f"{n} chapitre(s) détecté(s).")
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
+    _prepare_output_dir(output_dir, input_dir)
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(parents=True)
     tmp_dir = output_dir / "_tmp"
